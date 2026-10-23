@@ -27,12 +27,12 @@ jobs:
           echo "KEYSTORE_FILE=$RUNNER_TEMP/upload-keystore.jks" >> $GITHUB_ENV
 
       - name: Compilar AAB Firmado
+        working-directory: ./android
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          ./gradlew bundleRelease
+        run: ./gradlew bundleRelease
       - name: Subir AAB como Artefacto
         uses: actions/upload-artifact@v4
         with:
