@@ -6,19 +6,17 @@ Esta Política de Privacidad se aplica a la aplicación móvil Kimaai: for kimai
 
 La App es un proyecto de código abierto, de uso libre y gratuito, desarrollado por RoCV (en adelante, "el Desarrollador").
 
-2. Recopilación de Información
-La App NO recopila, solicita, almacena ni transmite ningún tipo de información personal ni datos del usuario.
+2. Recopilación de Información y Permisos
+La App es una herramienta de código abierto diseñada para conectarse directamente con la instancia auto-hospedada de Kimai del propio usuario.
 
 Específicamente:
+- **Permiso de Ubicación (GPS):** Si el usuario lo habilita voluntariamente, la App solicita acceso a la ubicación (precisa y aproximada) con el único propósito de registrar las coordenadas geográficas al iniciar o detener tiempos de trabajo en su propio servidor Kimai (para compatibilidad con plugins de geolocalización). Estas coordenadas se envían directamente y de manera exclusiva al servidor Kimai configurado por el usuario. Ni el desarrollador ni ningún intermediario recopilan, almacenan o tienen acceso a estos datos.
+- **Sin acceso a otros sensores:** No se solicitan permisos para acceder a contactos, cámara, micrófono, mensajes ni almacenamiento privado.
+- **Sin rastreo de terceros:** No se integran SDKs de análisis (analytics), publicidad comercial ni reporte de fallos de terceros.
+- **Sin cuentas adicionales:** No se requiere registrar una cuenta con el desarrollador; la autenticación se realiza únicamente entre el usuario y su servidor Kimai.
 
-No se solicitan permisos para acceder a contactos, ubicación, cámara, micrófono o almacenamiento.
-
-No se integran SDKs de análisis (analytics), publicidad ni reporte de fallos (crash reporting) de terceros.
-
-No se crean cuentas de usuario ni se solicita correo electrónico.
-
-3. Uso de Datos
-Dado que la App no recopila datos, no se realiza ningún tratamiento, uso, venta ni compartición de información con terceros.
+3. Uso y Tratamiento de Datos
+Cualquier dato gestionado (tiempos, proyectos, tareas y coordenadas opcionales) viaja exclusivamente entre el dispositivo del usuario y el servidor privado de Kimai configurado por él mismo. No se realiza ningún tratamiento, uso, venta ni compartición de información con terceros.
 
 4. Servicios de Terceros
 La App no utiliza servicios de terceros que puedan recopilar información de identificación personal.
