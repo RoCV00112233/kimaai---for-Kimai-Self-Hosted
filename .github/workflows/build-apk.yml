@@ -34,7 +34,17 @@ jobs:
 
       - name: Instalar dependencias
         run: |
-          npm install --legacy-peer-deps
+          npm_install_max_attempts=3
+          npm_install_attempt=1
+          until npm install --legacy-peer-deps --fetch-retries=5 --fetch-retry-maxtimeout=120000; do
+            if [ "$npm_install_attempt" -ge "$npm_install_max_attempts" ]; then
+              echo "npm install falló después de $npm_install_max_attempts intentos." >&2
+              exit 1
+            fi
+            echo "npm install falló (intento $npm_install_attempt/$npm_install_max_attempts) -- reintentando en 10s..." >&2
+            npm_install_attempt=$((npm_install_attempt + 1))
+            sleep 10
+          done
 
       - name: Compilar Web App
         run: |
@@ -63,19 +73,22 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      # Compilación de APK Release firmado (si se seleccionó release o both y los secretos existen)
+      # Decodificar keystore solo si se pidió release
       - name: Decodificar Keystore para Release
-        if: ${{ (inputs.build_type == 'release' || inputs.build_type == 'both') && env.KEYSTORE_BASE64 != '' }}
+        if: ${{ inputs.build_type == 'release' || inputs.build_type == 'both' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ERROR: El secreto KEYSTORE_BASE64 no está configurado en el repositorio." >&2
+            exit 1
+          fi
           echo "$KEYSTORE_BASE64" | base64 --decode > $RUNNER_TEMP/upload-keystore.jks
           echo "KEYSTORE_FILE=$RUNNER_TEMP/upload-keystore.jks" >> $GITHUB_ENV
 
       - name: Compilar APK Release con Gradle
-        if: ${{ (inputs.build_type == 'release' || inputs.build_type == 'both') && env.KEYSTORE_BASE64 != '' }}
+        if: ${{ inputs.build_type == 'release' || inputs.build_type == 'both' }}
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -84,9 +97,9 @@ jobs:
           ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Subir APK Release firmado como artefacto
-        if: ${{ (inputs.build_type == 'release' || inputs.build_type == 'both') && env.KEYSTORE_BASE64 != '' }}
+        if: ${{ inputs.build_type == 'release' || inputs.build_type == 'both' }}
         uses: actions/upload-artifact@v4
         with:
           name: Kimaai-Release-Signed-APK
           path: android/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: ignore
+          if-no-files-found: error
