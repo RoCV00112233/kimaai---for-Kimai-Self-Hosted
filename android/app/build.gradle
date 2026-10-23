@@ -1,7 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.codetimer.mobile"
+    namespace = "com.kimaai.com"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.codetimer.mobile"
