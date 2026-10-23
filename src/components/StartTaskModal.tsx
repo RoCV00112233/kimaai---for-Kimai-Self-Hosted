@@ -17,6 +17,8 @@ import {
   Sliders,
   Check,
   ChevronDown,
+  Users,
+  Briefcase,
 } from 'lucide-react';
 
 interface StartTaskModalProps {
@@ -29,6 +31,8 @@ interface StartTaskModalProps {
   gpsCoords: GPSCoords | null;
   gpsLoading: boolean;
   onRefreshGps: () => void;
+  onRefreshCatalog?: () => Promise<void>;
+  isRefreshingCatalog?: boolean;
   onStart: (params: {
     projectId: number;
     activityId: number;
@@ -59,7 +63,19 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
   defaultDescription,
   gpsPluginMode,
   onChangeGpsPluginMode,
+  onRefreshCatalog,
+  isRefreshingCatalog = false,
 }) => {
+  // Find customer of default project if passed
+  const initialCustomerId = useMemo(() => {
+    if (defaultProjectId) {
+      const p = projects.find((proj) => proj.id === defaultProjectId);
+      if (p && p.customer) return p.customer;
+    }
+    return 'all';
+  }, [defaultProjectId, projects]);
+
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | 'all'>(initialCustomerId);
   const [selectedProjectId, setSelectedProjectId] = useState<number | undefined>(
     defaultProjectId || projects[0]?.id
   );
@@ -68,23 +84,51 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
   );
   const [description, setDescription] = useState<string>(defaultDescription || '');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [searchCustomerQuery, setSearchCustomerQuery] = useState<string>('');
   const [searchProjectQuery, setSearchProjectQuery] = useState<string>('');
   const [includeGps, setIncludeGps] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showAdvancedGps, setShowAdvancedGps] = useState<boolean>(false);
 
-  // Filter projects by search
+  // Map project count per customer
+  const projectCountByCustomer = useMemo(() => {
+    const map: Record<number, number> = {};
+    projects.forEach((p) => {
+      if (p.customer) {
+        map[p.customer] = (map[p.customer] || 0) + 1;
+      }
+    });
+    return map;
+  }, [projects]);
+
+  // Filter customers by search
+  const filteredCustomers = useMemo(() => {
+    if (!searchCustomerQuery.trim()) return customers;
+    const q = searchCustomerQuery.toLowerCase();
+    return customers.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.number && c.number.toLowerCase().includes(q)) ||
+        (c.comment && c.comment.toLowerCase().includes(q))
+    );
+  }, [customers, searchCustomerQuery]);
+
+  // Filter projects by customer and search
   const filteredProjects = useMemo(() => {
-    if (!searchProjectQuery.trim()) return projects;
+    let list = projects;
+    if (selectedCustomerId !== 'all' && selectedCustomerId !== undefined) {
+      list = list.filter((p) => p.customer === selectedCustomerId);
+    }
+    if (!searchProjectQuery.trim()) return list;
     const q = searchProjectQuery.toLowerCase();
-    return projects.filter(
+    return list.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
         (p.customerName && p.customerName.toLowerCase().includes(q)) ||
         (p.orderNumber && p.orderNumber.toLowerCase().includes(q))
     );
-  }, [projects, searchProjectQuery]);
+  }, [projects, selectedCustomerId, searchProjectQuery]);
 
   // Filter activities relevant to project or global activities
   const relevantActivities = useMemo(() => {
@@ -94,9 +138,23 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
     );
   }, [activities, selectedProjectId]);
 
+  // If user selects a customer, update filtered projects and select first project
+  const handleSelectCustomer = (custId: number | 'all') => {
+    setSelectedCustomerId(custId);
+    if (custId === 'all') return;
+    const custProjects = projects.filter((p) => p.customer === custId);
+    if (custProjects.length > 0 && (!selectedProjectId || !custProjects.some((p) => p.id === selectedProjectId))) {
+      handleSelectProject(custProjects[0].id);
+    }
+  };
+
   // If selected activity is not valid for newly selected project, reset it
   const handleSelectProject = (projId: number) => {
     setSelectedProjectId(projId);
+    const proj = projects.find((p) => p.id === projId);
+    if (proj && proj.customer && selectedCustomerId !== 'all' && selectedCustomerId !== proj.customer) {
+      setSelectedCustomerId(proj.customer);
+    }
     const valid = activities.filter((a) => !a.project || a.project === projId);
     if (valid.length > 0 && (!selectedActivityId || !valid.some((a) => a.id === selectedActivityId))) {
       setSelectedActivityId(valid[0].id);
@@ -151,20 +209,42 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white leading-tight">Iniciar Tarea</h2>
-              <p className="text-[11px] text-slate-400">Selecciona proyecto, actividad y telemetría</p>
+              <p className="text-[11px] text-slate-400">Selecciona cliente, proyecto, actividad y telemetría</p>
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {onRefreshCatalog && (
+              <button
+                type="button"
+                onClick={onRefreshCatalog}
+                disabled={isRefreshingCatalog}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition cursor-pointer disabled:opacity-50"
+                title="Actualizar clientes, proyectos y actividades desde Kimai"
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshingCatalog ? 'animate-spin text-amber-400' : ''}`} />
+              </button>
+            )}
+
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Scrollable Content */}
         <form onSubmit={handleStart} className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Refreshing Banner */}
+          {isRefreshingCatalog && (
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-3 py-2 flex items-center gap-2 text-xs text-amber-300 animate-pulse">
+              <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" />
+              <span>Sincronizando clientes, proyectos y actividades más recientes...</span>
+            </div>
+          )}
+
           {errorMessage && (
             <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 flex items-start gap-2.5 text-xs text-rose-300">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -178,11 +258,113 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
             </div>
           )}
 
+          {/* Customer Selector */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-amber-400" />
+                <span>Cliente</span>
+                <span className="text-[10px] text-slate-500 font-normal">
+                  ({customers.length > 0 ? `${customers.length} disponibles` : 'Sin clientes registrados'})
+                </span>
+              </label>
+
+              {selectedCustomerId !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectCustomer('all')}
+                  className="text-[11px] text-amber-400 hover:underline cursor-pointer"
+                >
+                  Ver todos
+                </button>
+              )}
+            </div>
+
+            {customers.length > 3 && (
+              <div className="relative mb-2">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar cliente..."
+                  value={searchCustomerQuery}
+                  onChange={(e) => setSearchCustomerQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl bg-slate-950/70 border border-slate-800 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            )}
+
+            <div className="max-h-32 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/40 p-1 space-y-1">
+              {/* Option: Todos los clientes */}
+              <button
+                type="button"
+                onClick={() => handleSelectCustomer('all')}
+                className={`w-full flex items-center justify-between p-2 rounded-lg text-left text-xs transition cursor-pointer ${
+                  selectedCustomerId === 'all'
+                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold'
+                    : 'text-slate-300 hover:bg-slate-800/60'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Users className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Todos los Clientes</span>
+                </div>
+                <span className="text-[10px] text-slate-500">{projects.length} proyectos</span>
+              </button>
+
+              {/* Individual customers */}
+              {filteredCustomers.map((c) => {
+                const isSelected = selectedCustomerId === c.id;
+                const count = projectCountByCustomer[c.id] || 0;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => handleSelectCustomer(c.id)}
+                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left text-xs transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold'
+                        : 'text-slate-300 hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: c.color || '#F59E0B' }}
+                      />
+                      <span className="truncate">{c.name}</span>
+                      {c.number && (
+                        <span className="text-[10px] text-slate-500 font-mono">#{c.number}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500">
+                        {count} {count === 1 ? 'proyecto' : 'proyectos'}
+                      </span>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                    </div>
+                  </button>
+                );
+              })}
+
+              {filteredCustomers.length === 0 && customers.length > 0 && (
+                <p className="p-3 text-center text-xs text-slate-500">No se encontraron clientes</p>
+              )}
+            </div>
+          </div>
+
           {/* Project Selector with search */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Proyecto <span className="text-emerald-400">*</span>
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Briefcase className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Proyecto <span className="text-emerald-400">*</span></span>
+              </label>
+              {selectedCustomerId !== 'all' && (
+                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                  Filtrado por cliente
+                </span>
+              )}
+            </div>
 
             {/* Quick search */}
             <div className="relative mb-2">

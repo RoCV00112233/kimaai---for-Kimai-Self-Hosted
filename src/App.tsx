@@ -22,6 +22,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { SetupScreen } from './components/SetupScreen';
+import { PullToRefresh } from './components/PullToRefresh';
 import { AlertCircle, RefreshCw, Zap } from 'lucide-react';
 
 export default function App() {
@@ -278,14 +279,25 @@ export default function App() {
     }
   };
 
+  // Open start modal with instant catalog refresh
+  const handleOpenStartModal = (defaults: {
+    projectId?: number;
+    activityId?: number;
+    description?: string;
+  } = {}) => {
+    setResumeDefaults(defaults);
+    setIsStartModalOpen(true);
+    // Refresh catalog from Kimai server so any newly added customers/projects/activities appear
+    fetchData();
+  };
+
   // Quick resume task
   const handleResumeTask = (projectId: number, activityId: number, desc?: string) => {
-    setResumeDefaults({
+    handleOpenStartModal({
       projectId,
       activityId,
       description: desc,
     });
-    setIsStartModalOpen(true);
   };
 
   // Update configuration
@@ -393,96 +405,96 @@ export default function App() {
     <div className="min-h-screen bg-[#070a11] text-slate-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200">
       <OfflineIndicator />
 
-      {/* Header */}
-      <Header
-        config={config}
-        user={user}
-        gpsCoords={gpsCoords}
-        gpsLoading={gpsLoading}
-        onRefreshGps={refreshLocation}
-        onOpenSettings={() => setIsSettingsModalOpen(true)}
-        onOpenAbout={() => setIsAboutModalOpen(true)}
-        onToggleDemoMode={handleToggleDemoMode}
-      />
+      {/* Pull To Refresh Mobile Container */}
+      <PullToRefresh onRefresh={fetchData} isRefreshing={isLoading}>
+        {/* Header */}
+        <Header
+          config={config}
+          user={user}
+          gpsCoords={gpsCoords}
+          gpsLoading={gpsLoading}
+          onRefreshGps={refreshLocation}
+          onOpenSettings={() => setIsSettingsModalOpen(true)}
+          onOpenAbout={() => setIsAboutModalOpen(true)}
+          onToggleDemoMode={handleToggleDemoMode}
+        />
 
-      {/* Error banner if connection failed */}
-      {errorBanner && (
-        <div className="bg-rose-500/15 border-b border-rose-500/30 px-4 py-2.5 text-xs text-rose-300 flex items-center justify-between gap-2 max-w-xl mx-auto w-full">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span className="truncate">{errorBanner}</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={handleToggleDemoMode}
-              className="text-[11px] underline text-rose-200 hover:text-white"
-            >
-              Usar Modo Demo
-            </button>
-            <button
-              onClick={() => setIsSettingsModalOpen(true)}
-              className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-200 text-[11px] font-medium"
-            >
-              Ajustes
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-xl w-full mx-auto p-4 pb-28 space-y-5">
-        {currentTab === 'timer' && (
-          <div className="space-y-5">
-            <ActiveTimer
-              activeTimesheet={activeTimesheet}
-              onStop={handleStopTask}
-              onStartNew={() => {
-                setResumeDefaults({});
-                setIsStartModalOpen(true);
-              }}
-              onResumeTask={handleResumeTask}
-              recentTasks={recentQuickTasks}
-              isStopping={isStopping}
-              gpsCoords={gpsCoords}
-              projects={projects}
-              activities={activities}
-            />
-
-            {/* Quick Timesheet Mini Preview */}
-            <div className="pt-2">
-              <TimesheetHistory
-                timesheets={recentTimesheets.slice(0, 10)}
-                onResume={handleResumeTask}
-                isLoading={isLoading}
-                onRefresh={fetchData}
-                projects={projects}
-                activities={activities}
-              />
+        {/* Error banner if connection failed */}
+        {errorBanner && (
+          <div className="bg-rose-500/15 border-b border-rose-500/30 px-4 py-2.5 text-xs text-rose-300 flex items-center justify-between gap-2 max-w-xl mx-auto w-full">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="truncate">{errorBanner}</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleToggleDemoMode}
+                className="text-[11px] underline text-rose-200 hover:text-white"
+              >
+                Usar Modo Demo
+              </button>
+              <button
+                onClick={() => setIsSettingsModalOpen(true)}
+                className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-200 text-[11px] font-medium"
+              >
+                Ajustes
+              </button>
             </div>
           </div>
         )}
 
-        {currentTab === 'history' && (
-          <TimesheetHistory
-            timesheets={recentTimesheets}
-            onResume={handleResumeTask}
-            isLoading={isLoading}
-            onRefresh={fetchData}
-            projects={projects}
-            activities={activities}
-          />
-        )}
+        {/* Main Content Area */}
+        <main className="flex-1 max-w-xl w-full mx-auto p-4 pb-28 space-y-5">
+          {currentTab === 'timer' && (
+            <div className="space-y-5">
+              <ActiveTimer
+                activeTimesheet={activeTimesheet}
+                onStop={handleStopTask}
+                onStartNew={() => handleOpenStartModal({})}
+                onResumeTask={handleResumeTask}
+                recentTasks={recentQuickTasks}
+                isStopping={isStopping}
+                gpsCoords={gpsCoords}
+                projects={projects}
+                activities={activities}
+              />
 
-        {currentTab === 'gps' && (
-          <GpsDiagnostics
-            config={config}
-            onUpdateConfig={handleUpdateConfigPartial}
-            gpsCoords={gpsCoords}
-            gpsLoading={gpsLoading}
-            onRefreshGps={refreshLocation}
-          />
-        )}
-      </main>
+              {/* Quick Timesheet Mini Preview */}
+              <div className="pt-2">
+                <TimesheetHistory
+                  timesheets={recentTimesheets.slice(0, 10)}
+                  onResume={handleResumeTask}
+                  isLoading={isLoading}
+                  onRefresh={fetchData}
+                  projects={projects}
+                  activities={activities}
+                />
+              </div>
+            </div>
+          )}
+
+          {currentTab === 'history' && (
+            <TimesheetHistory
+              timesheets={recentTimesheets}
+              onResume={handleResumeTask}
+              isLoading={isLoading}
+              onRefresh={fetchData}
+              projects={projects}
+              activities={activities}
+            />
+          )}
+
+          {currentTab === 'gps' && (
+            <GpsDiagnostics
+              config={config}
+              onUpdateConfig={handleUpdateConfigPartial}
+              gpsCoords={gpsCoords}
+              gpsLoading={gpsLoading}
+              onRefreshGps={refreshLocation}
+            />
+          )}
+        </main>
+      </PullToRefresh>
 
       {/* Start Task Modal */}
       <StartTaskModal
@@ -495,6 +507,8 @@ export default function App() {
         gpsCoords={gpsCoords}
         gpsLoading={gpsLoading}
         onRefreshGps={refreshLocation}
+        onRefreshCatalog={fetchData}
+        isRefreshingCatalog={isLoading}
         onStart={handleStartTask}
         defaultProjectId={resumeDefaults.projectId}
         defaultActivityId={resumeDefaults.activityId}
