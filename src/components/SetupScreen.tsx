@@ -76,7 +76,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
             <h1 className="text-2xl font-bold tracking-tight text-white flex items-center justify-center gap-1.5">
               <span>kimaai</span>
               <span className="text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-                v1.2.0
+                v1.2.2
               </span>
             </h1>
             <p className="text-xs font-medium text-amber-200/80 mt-0.5">
