@@ -3,8 +3,8 @@ name: Build Release AAB
 on:
   push:
     tags:
-      - 'v*' # Se ejecuta al subir un tag como v1.0.0
-  workflow_dispatch: # Permite ejecución manual
+      - 'v*' 
+  workflow_dispatch: 
 
 jobs:
   build:
@@ -23,9 +23,7 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          # Crea el archivo .jks desde el secreto Base64
           echo "$KEYSTORE_BASE64" | base64 --decode > $RUNNER_TEMP/upload-keystore.jks
-          # Exporta la ruta para el siguiente paso
           echo "KEYSTORE_FILE=$RUNNER_TEMP/upload-keystore.jks" >> $GITHUB_ENV
 
       - name: Compilar AAB Firmado
@@ -34,9 +32,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          # Usamos la ruta del keystore decodificado en el paso anterior
           ./gradlew bundleRelease
-
       - name: Subir AAB como Artefacto
         uses: actions/upload-artifact@v4
         with:
