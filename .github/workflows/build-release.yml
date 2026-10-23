@@ -19,15 +19,29 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Sincronizar Capacitor
+        run: npx cap sync android
+      # -----------------------------------
+
       - name: Decodificar Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > $RUNNER_TEMP/upload-keystore.jks
           echo "KEYSTORE_FILE=$RUNNER_TEMP/upload-keystore.jks" >> $GITHUB_ENV
+
       - name: Dar permiso de ejecución a gradlew
         working-directory: ./android
         run: chmod +x ./gradlew
+
       - name: Compilar AAB Firmado
         working-directory: ./android
         env:
@@ -35,8 +49,9 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew bundleRelease
+
       - name: Subir AAB como Artefacto
         uses: actions/upload-artifact@v4
         with:
           name: release-aab
-          path: app/build/outputs/bundle/release/app-release.aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
