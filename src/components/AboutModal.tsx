@@ -42,7 +42,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
               <span>kimaai</span>
               <span className="text-[10px] uppercase font-semibold tracking-wider text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-                v2.5
+                v1.2.0
               </span>
             </h2>
             <p className="text-xs text-amber-200/80 font-medium mt-0.5">

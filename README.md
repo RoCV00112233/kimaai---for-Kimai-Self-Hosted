@@ -25,7 +25,7 @@ La App no utiliza servicios de terceros que puedan recopilar información de ide
 
 5. Código Fuente y Transparencia
 Al ser un proyecto de código abierto, el código fuente completo de la App está disponible públicamente para su auditoría en:
-[Enlace a tu repositorio de GitHub/GitLab]
+https://github.com/RoCV00112233/TimeTracker-CV
 
 Cualquier persona puede verificar de forma independiente que la App no contiene mecanismos de recolección de datos.
 

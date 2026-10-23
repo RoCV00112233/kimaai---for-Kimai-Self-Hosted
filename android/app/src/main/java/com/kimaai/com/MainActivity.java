@@ -1,4 +1,4 @@
-package com.codetimer.mobile;
+package com.kimaai.com;
 
 import com.getcapacitor.BridgeActivity;
 

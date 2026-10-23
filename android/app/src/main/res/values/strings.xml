@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">Kimaai</string>
     <string name="title_activity_main">kimaai - for Kimai Self-Hosted</string>
-    <string name="package_name">com.codetimer.mobile</string>
-    <string name="custom_url_scheme">com.codetimer.mobile</string>
+    <string name="package_name">com.kimaai.com</string>
+    <string name="custom_url_scheme">com.kimaai.com</string>
 </resources>

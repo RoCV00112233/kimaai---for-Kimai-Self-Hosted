@@ -48,7 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               </h1>
               <span className="text-[9px] font-semibold text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
-                v2.5
+                v1.2.0
               </span>
             </div>
             <div className="flex items-center gap-1 text-[11px] text-slate-400">

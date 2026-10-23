@@ -60,6 +60,6 @@ jobs:
       - name: Subir AAB como artefacto descargable
         uses: actions/upload-artifact@v4
         with:
-          name: CodeTimer-Mobile-AAB
+          name: Kimaai-Release-AAB
           path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error

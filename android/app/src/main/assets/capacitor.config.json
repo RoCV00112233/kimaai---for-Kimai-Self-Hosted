@@ -1,6 +1,6 @@
 {
-	"appId": "com.codetimer.mobile",
-	"appName": "CodeTimer Mobile",
+	"appId": "com.kimaai.com",
+	"appName": "Kimaai",
 	"webDir": "dist",
 	"bundledWebRuntime": false,
 	"server": {
