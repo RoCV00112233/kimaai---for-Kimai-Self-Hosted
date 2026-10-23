@@ -26,6 +26,7 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 --decode > $RUNNER_TEMP/upload-keystore.jks
           echo "KEYSTORE_FILE=$RUNNER_TEMP/upload-keystore.jks" >> $GITHUB_ENV
       - name: Dar permiso de ejecución a gradlew
+        working-directory: ./android
         run: chmod +x ./gradlew
       - name: Compilar AAB Firmado
         working-directory: ./android
