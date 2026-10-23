@@ -6,7 +6,7 @@ export const DEFAULT_CONFIG: KimaiConfig = {
   baseUrl: '',
   username: '',
   apiToken: '',
-  useProxy: true,
+  useProxy: false,
   isDemoMode: false,
   isConfigured: false,
   gpsEnabled: true,
