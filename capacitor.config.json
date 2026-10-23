@@ -1,0 +1,19 @@
+{
+  "appId": "com.codetimer.mobile",
+  "appName": "Kimaai",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "plugins": {
+    "Geolocation": {
+      "permissions": ["location"]
+    },
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#0B0F17"
+    }
+  }
+}

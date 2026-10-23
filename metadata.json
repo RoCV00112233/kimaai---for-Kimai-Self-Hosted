@@ -1,0 +1,6 @@
+{
+  "name": "kimaai - for Kimai Self-Hosted",
+  "description": "Cliente móvil elegante y ligero para Kimai Self-Hosted con compatibilidad GPS",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
