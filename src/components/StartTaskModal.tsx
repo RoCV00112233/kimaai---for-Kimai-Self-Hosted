@@ -617,7 +617,7 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
               </label>
             </div>
 
-            {includeGps && (
+            {includeGps ? (
               <div className="pt-2 border-t border-slate-800/80 space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-400">Coordenadas del sensor:</span>
@@ -712,6 +712,10 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
                   </div>
                 )}
               </div>
+            ) : (
+              <p className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400">
+                GPS en vivo desactivado: se enviará sin ubicación (si tu servidor Kimai exige GPS obligatorio, usará las coordenadas de respaldo).
+              </p>
             )}
           </div>
 

@@ -1,3 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:shrinkMode="safe" />
+    tools:shrinkMode="safe"
+    tools:keep="@xml/config,@xml/file_paths,@xml/network_security_config,@xml/backup_rules,@xml/data_extraction_rules,@drawable/splash*,@mipmap/ic_launcher*,@layout/activity_main,@layout/capacitor_bridge_layout_main,@layout/no_webview,@id/webview,@style/AppTheme*" />

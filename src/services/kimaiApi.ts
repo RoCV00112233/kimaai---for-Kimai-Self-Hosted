@@ -77,6 +77,50 @@ function mergeMetaFields(
   return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
 }
 
+function collectSymfonyErrors(node: any, path: string = ''): string[] {
+  if (!node || typeof node !== 'object') return [];
+  const collected: string[] = [];
+
+  if (Array.isArray(node.errors)) {
+    for (const errItem of node.errors) {
+      if (typeof errItem === 'string' && errItem.trim()) {
+        collected.push(path ? `${path}: ${errItem.trim()}` : errItem.trim());
+      }
+    }
+  }
+
+  if (node.children && typeof node.children === 'object') {
+    if (Array.isArray(node.children)) {
+      node.children.forEach((child: any, idx: number) => {
+        collected.push(...collectSymfonyErrors(child, path ? `${path}[${idx}]` : `[${idx}]`));
+      });
+    } else {
+      for (const [key, val] of Object.entries(node.children)) {
+        const nextPath = path ? `${path}.${key}` : key;
+        collected.push(...collectSymfonyErrors(val, nextPath));
+      }
+    }
+  }
+
+  return collected;
+}
+
+function formatKimaiErrorMessage(responseData: any): string {
+  const baseMsg =
+    responseData?.message ||
+    responseData?.data?.message ||
+    responseData?.error ||
+    (typeof responseData === 'string' ? responseData : JSON.stringify(responseData));
+
+  const details = Array.from(
+    new Set(collectSymfonyErrors(responseData?.errors ?? responseData?.data?.errors))
+  );
+  if (details.length > 0) {
+    return `${baseMsg} (${details.join('; ')})`;
+  }
+  return String(baseMsg);
+}
+
 // In-memory state for Demo Mode so the user can interact freely
 let demoActiveTimesheet: KimaiTimesheet | null = { ...MOCK_ACTIVE_TIMESHEET };
 let demoPastTimesheets: KimaiTimesheet[] = [...MOCK_PAST_TIMESHEETS];
@@ -177,11 +221,7 @@ export class KimaiApiClient {
           response: responseData,
         });
 
-        const errorMessage =
-          responseData?.message ||
-          responseData?.data?.message ||
-          responseData?.error ||
-          (typeof responseData === 'string' ? responseData : JSON.stringify(responseData));
+        const errorMessage = formatKimaiErrorMessage(responseData);
 
         throw new Error(
           `Kimai API Error (${response.status} ${response.statusText}): ${errorMessage}`
@@ -346,7 +386,7 @@ export class KimaiApiClient {
     const res = await this.request<any>('/tags');
     if (!Array.isArray(res)) return [];
     return res
-      .map((t) => (typeof t === 'string' ? t : t?.name || String(t || '')))
+      .map((t) => (typeof t === 'string' ? t : typeof t?.name === 'string' ? t.name : ''))
       .map((t) => t.trim())
       .filter(Boolean);
   }
@@ -359,6 +399,47 @@ export class KimaiApiClient {
   public async getRecentTimesheets(size: number = 30): Promise<KimaiTimesheet[]> {
     const res = await this.request<any>(`/timesheets?size=${size}&order=DESC&orderBy=begin`);
     return Array.isArray(res) ? res : [];
+  }
+
+  private buildCreatePayloadWithGps(
+    basePayload: Record<string, any>,
+    gps: GPSCoords,
+    mode: KimaiConfig['gpsPluginMode']
+  ): Record<string, any> {
+    const latStr = gps.latitude.toFixed(6);
+    const lonStr = gps.longitude.toFixed(6);
+    const coordStr = `${latStr},${lonStr}`;
+    const payload = { ...basePayload };
+
+    if (mode === 'metaFields' || mode === 'smart') {
+      payload.metaFields = [
+        { name: 'latitude', value: latStr },
+        { name: 'longitude', value: lonStr },
+      ];
+    } else if (mode === 'rootFields') {
+      payload.latitude = Number(latStr);
+      payload.longitude = Number(lonStr);
+      payload.location = coordStr;
+    } else if (mode === 'legacy') {
+      payload.metaFields = [
+        { name: 'geo_lat', value: latStr },
+        { name: 'geo_long', value: lonStr },
+      ];
+    }
+
+    return payload;
+  }
+
+  private getFallbackCoords(): GPSCoords {
+    const rawLat = Number(this.config.fallbackLatitude);
+    const rawLon = Number(this.config.fallbackLongitude);
+    return {
+      latitude: Number.isFinite(rawLat) ? rawLat : 19.432608,
+      longitude: Number.isFinite(rawLon) ? rawLon : -99.133209,
+      accuracy: 10,
+      timestamp: Date.now(),
+      source: 'fallback',
+    };
   }
 
   /**
@@ -385,53 +466,84 @@ export class KimaiApiClient {
     }
 
     const mode = this.config.gpsPluginMode || 'smart';
-    const gps = mode !== 'bypass' ? params.gpsCoords || null : null;
+    let gps = mode !== 'bypass' ? params.gpsCoords || null : null;
 
-    const latStr = gps ? gps.latitude.toFixed(6) : '';
-    const lonStr = gps ? gps.longitude.toFixed(6) : '';
-    const coordStr = gps ? `${latStr},${lonStr}` : '';
-
-    const createPayload = { ...basePayload };
-    if (gps) {
-      if (mode === 'metaFields' || mode === 'smart') {
-        createPayload.metaFields = [
-          { name: 'latitude', value: latStr },
-          { name: 'longitude', value: lonStr },
-        ];
-      } else if (mode === 'rootFields') {
-        createPayload.latitude = Number(latStr);
-        createPayload.longitude = Number(lonStr);
-        createPayload.location = coordStr;
-      } else if (mode === 'legacy') {
-        createPayload.metaFields = [
-          { name: 'geo_lat', value: latStr },
-          { name: 'geo_long', value: lonStr },
-        ];
-      }
-    }
+    const createPayload = gps
+      ? this.buildCreatePayloadWithGps(basePayload, gps, mode)
+      : { ...basePayload };
 
     let started: KimaiTimesheet;
     try {
       started = await this.request<KimaiTimesheet>('/timesheets', 'POST', createPayload, Boolean(gps));
     } catch (err: any) {
       const msg = String(err?.message || '');
-      // In 'smart' mode, if Kimai's Symfony form rejects extra fields on POST (400),
-      // retry with root fields and/or clean base payload and attach GPS via /meta endpoints.
-      if (gps && mode === 'smart' && msg.includes('400')) {
+      const lowerMsg = msg.toLowerCase();
+      const isNonGpsDomainError =
+        /overlap|solapa|already|activa|active timesheet|closed|cerrado|budget|presupuesto|locked|bloqueado/.test(
+          lowerMsg
+        );
+
+      if (gps && mode === 'smart' && msg.includes('400') && !isNonGpsDomainError) {
         try {
           started = await this.request<KimaiTimesheet>(
             '/timesheets',
             'POST',
-            {
-              ...basePayload,
-              latitude: Number(latStr),
-              longitude: Number(lonStr),
-              location: coordStr,
-            },
+            this.buildCreatePayloadWithGps(basePayload, gps, 'rootFields'),
             true
           );
         } catch {
-          started = await this.request<KimaiTimesheet>('/timesheets', 'POST', basePayload, true);
+          try {
+            started = await this.request<KimaiTimesheet>(
+              '/timesheets',
+              'POST',
+              this.buildCreatePayloadWithGps(basePayload, gps, 'legacy'),
+              true
+            );
+          } catch {
+            started = await this.request<KimaiTimesheet>('/timesheets', 'POST', basePayload, true);
+          }
+        }
+      } else if (!gps && msg.includes('400') && !isNonGpsDomainError && mode !== 'bypass') {
+        // When GPS was disabled in the app, some Kimai servers still require GPS metaFields/fields
+        // on POST /timesheets. Retry with configured fallback coordinates if enabled.
+        const mentionsGpsField = /metafield|latitude|longitude|location|gps|geo_|blank|vacío|required|obligatorio/.test(
+          lowerMsg
+        );
+        if (this.config.useFallbackGPS || mentionsGpsField) {
+          const fallbackGps = this.getFallbackCoords();
+          const fallbackPayload = this.buildCreatePayloadWithGps(basePayload, fallbackGps, mode);
+          try {
+            started = await this.request<KimaiTimesheet>('/timesheets', 'POST', fallbackPayload, true);
+            gps = fallbackGps;
+          } catch (fallbackErr: any) {
+            if (mode === 'smart' && String(fallbackErr?.message || '').includes('400')) {
+              try {
+                started = await this.request<KimaiTimesheet>(
+                  '/timesheets',
+                  'POST',
+                  this.buildCreatePayloadWithGps(basePayload, fallbackGps, 'rootFields'),
+                  true
+                );
+                gps = fallbackGps;
+              } catch {
+                try {
+                  started = await this.request<KimaiTimesheet>(
+                    '/timesheets',
+                    'POST',
+                    this.buildCreatePayloadWithGps(basePayload, fallbackGps, 'legacy'),
+                    true
+                  );
+                  gps = fallbackGps;
+                } catch {
+                  throw err;
+                }
+              }
+            } else {
+              throw err;
+            }
+          }
+        } else {
+          throw err;
         }
       } else {
         throw err;
@@ -440,6 +552,10 @@ export class KimaiApiClient {
 
     // Attach and verify GPS meta fields (KimaiMobileGPSInfoBundle & Custom MetaFields)
     if (gps && started?.id && mode !== 'bypass') {
+      const latStr = gps.latitude.toFixed(6);
+      const lonStr = gps.longitude.toFixed(6);
+      const coordStr = `${latStr},${lonStr}`;
+
       const metaTargets: KimaiMetaField[] = [];
       const existingNames = new Set((started.metaFields || []).map((m) => m.name));
 

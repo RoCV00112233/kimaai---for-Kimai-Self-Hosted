@@ -16,20 +16,24 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void hardenWebView() {
-        boolean isDebuggable =
-            (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
-        WebView.setWebContentsDebuggingEnabled(isDebuggable);
+        try {
+            boolean isDebuggable =
+                (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            WebView.setWebContentsDebuggingEnabled(isDebuggable);
 
-        if (this.bridge != null && this.bridge.getWebView() != null) {
-            WebSettings settings = this.bridge.getWebView().getSettings();
-            settings.setAllowFileAccess(false);
-            settings.setAllowContentAccess(false);
-            settings.setAllowFileAccessFromFileURLs(false);
-            settings.setAllowUniversalAccessFromFileURLs(false);
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-            settings.setJavaScriptCanOpenWindowsAutomatically(false);
-            settings.setSupportMultipleWindows(false);
-            settings.setSaveFormData(false);
+            if (this.bridge != null && this.bridge.getWebView() != null) {
+                WebSettings settings = this.bridge.getWebView().getSettings();
+                settings.setAllowFileAccess(false);
+                settings.setAllowContentAccess(false);
+                settings.setAllowFileAccessFromFileURLs(false);
+                settings.setAllowUniversalAccessFromFileURLs(false);
+                settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+                settings.setJavaScriptCanOpenWindowsAutomatically(false);
+                settings.setSupportMultipleWindows(false);
+                settings.setSaveFormData(false);
+            }
+        } catch (Exception ignored) {
+            // Prevent OEM WebView implementation quirks from aborting Activity startup
         }
     }
 }
