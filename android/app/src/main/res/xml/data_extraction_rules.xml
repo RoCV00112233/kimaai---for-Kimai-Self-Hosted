@@ -3,13 +3,15 @@
     <cloud-backup>
         <exclude domain="sharedpref" path="." />
         <exclude domain="database" path="." />
-        <exclude domain="files" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="external" path="." />
         <exclude domain="root" path="." />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="." />
         <exclude domain="database" path="." />
-        <exclude domain="files" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="external" path="." />
         <exclude domain="root" path="." />
     </device-transfer>
 </data-extraction-rules>
