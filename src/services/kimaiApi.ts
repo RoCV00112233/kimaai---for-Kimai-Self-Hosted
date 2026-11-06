@@ -4,6 +4,7 @@ import {
   KimaiActivity,
   KimaiConfig,
   KimaiCustomer,
+  KimaiMetaField,
   KimaiProject,
   KimaiTimesheet,
   KimaiUser,
@@ -28,14 +29,52 @@ export function subscribeApiLogs(listener: LogListener) {
   };
 }
 
+function sanitizeForLog(value: any, depth: number = 0): any {
+  if (depth > 4 || value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => sanitizeForLog(item, depth + 1));
+  }
+  const clean: Record<string, any> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (/token|password|secret|authorization|cookie/i.test(k)) {
+      clean[k] = '[REDACTED]';
+    } else {
+      clean[k] = sanitizeForLog(v, depth + 1);
+    }
+  }
+  return clean;
+}
+
 function broadcastLog(entry: ApiLogEntry) {
+  const safeEntry: ApiLogEntry = {
+    ...entry,
+    payload: sanitizeForLog(entry.payload),
+    response: sanitizeForLog(entry.response),
+  };
   logListeners.forEach((fn) => {
     try {
-      fn(entry);
+      fn(safeEntry);
     } catch (e) {
       console.error('Log listener error:', e);
     }
   });
+}
+
+function mergeMetaFields(
+  existing: KimaiMetaField[] | undefined,
+  additions: KimaiMetaField[]
+): KimaiMetaField[] {
+  const map = new Map<string, string>();
+  (existing || []).forEach((m) => {
+    if (m && m.name) map.set(m.name, String(m.value ?? ''));
+  });
+  additions.forEach((m) => {
+    if (m && m.name && !map.has(m.name)) {
+      map.set(m.name, String(m.value ?? ''));
+    }
+  });
+  return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
 }
 
 // In-memory state for Demo Mode so the user can interact freely
@@ -71,7 +110,6 @@ export class KimaiApiClient {
     const logId = Math.random().toString(36).substring(2, 9);
     const timestamp = new Date().toLocaleTimeString();
 
-    // Broadcast outgoing request log
     broadcastLog({
       id: logId,
       timestamp,
@@ -98,7 +136,7 @@ export class KimaiApiClient {
           body: JSON.stringify({
             endpoint,
             baseUrl: this.config.baseUrl,
-            username: this.config.username,
+            username: this.config.username || 'usuario',
             apiToken: this.config.apiToken,
             method,
             body,
@@ -142,6 +180,7 @@ export class KimaiApiClient {
         const errorMessage =
           responseData?.message ||
           responseData?.data?.message ||
+          responseData?.error ||
           (typeof responseData === 'string' ? responseData : JSON.stringify(responseData));
 
         throw new Error(
@@ -181,14 +220,14 @@ export class KimaiApiClient {
     logId: string,
     timestamp: string
   ): Promise<T> {
-    await new Promise((resolve) => setTimeout(resolve, 250)); // Simular latencia de red
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     let data: any;
 
     if (endpoint.includes('/ping')) {
       data = { message: 'pong', mode: 'demo' };
     } else if (endpoint.includes('/version')) {
-      data = { version: '2.14.0', candidate: 'CodeTimer Mobile Demo', semver: '2.14.0' };
+      data = { version: '2.14.0', candidate: 'Kimaai Demo', semver: '2.14.0' };
     } else if (endpoint.includes('/users/me')) {
       data = MOCK_USER;
     } else if (endpoint.includes('/timesheets/active')) {
@@ -200,13 +239,35 @@ export class KimaiApiClient {
     } else if (endpoint.includes('/customers')) {
       data = MOCK_CUSTOMERS;
     } else if (endpoint.includes('/tags')) {
-      data = ['mobile', 'gps', 'frontend', 'backend', 'v2', 'testing', 'kimai'];
+      data = ['movil', 'gps', 'frontend', 'backend', 'v2', 'testing', 'kimai'];
+    } else if (endpoint.includes('/timesheets') && endpoint.includes('/meta') && method === 'PATCH') {
+      if (demoActiveTimesheet && body?.name) {
+        demoActiveTimesheet = {
+          ...demoActiveTimesheet,
+          metaFields: mergeMetaFields(demoActiveTimesheet.metaFields, [
+            { name: body.name, value: String(body.value ?? '') },
+          ]),
+        };
+      }
+      data = { name: body?.name, value: body?.value };
     } else if (endpoint.includes('/timesheets') && method === 'GET') {
       data = demoPastTimesheets;
     } else if (endpoint.includes('/timesheets') && method === 'POST') {
-      // Start timesheet
       const project = MOCK_PROJECTS.find((p) => p.id === Number(body.project)) || MOCK_PROJECTS[0];
       const activity = MOCK_ACTIVITIES.find((a) => a.id === Number(body.activity)) || MOCK_ACTIVITIES[0];
+      const parsedTags = Array.isArray(body.tags)
+        ? body.tags
+        : typeof body.tags === 'string'
+        ? body.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
+        : [];
+
+      const initialMeta: KimaiMetaField[] = Array.isArray(body.metaFields) ? [...body.metaFields] : [];
+      if (body.latitude !== undefined && body.longitude !== undefined) {
+        initialMeta.push(
+          { name: 'latitude', value: String(body.latitude) },
+          { name: 'longitude', value: String(body.longitude) }
+        );
+      }
 
       demoActiveTimesheet = {
         id: Date.now(),
@@ -217,8 +278,8 @@ export class KimaiApiClient {
         project,
         activity,
         description: body.description || '',
-        tags: body.tags || [],
-        metaFields: body.metaFields || [],
+        tags: parsedTags,
+        metaFields: initialMeta,
       };
       data = demoActiveTimesheet;
     } else if (endpoint.includes('/stop') && method === 'PATCH') {
@@ -283,7 +344,11 @@ export class KimaiApiClient {
 
   public async getTags(): Promise<string[]> {
     const res = await this.request<any>('/tags');
-    return Array.isArray(res) ? res : [];
+    if (!Array.isArray(res)) return [];
+    return res
+      .map((t) => (typeof t === 'string' ? t : t?.name || String(t || '')))
+      .map((t) => t.trim())
+      .filter(Boolean);
   }
 
   public async getActiveTimesheets(): Promise<KimaiTimesheet[]> {
@@ -297,7 +362,7 @@ export class KimaiApiClient {
   }
 
   /**
-   * Starts a timesheet safely with KimaiMobileGPSInfoBundle and GeoTracking support.
+   * Starts a timesheet and attaches GPS coordinates according to the configured Kimai GPS plugin mode.
    */
   public async startTimesheet(params: {
     projectId: number;
@@ -306,62 +371,126 @@ export class KimaiApiClient {
     tags?: string[];
     gpsCoords?: GPSCoords | null;
   }): Promise<KimaiTimesheet> {
-    // Only standard form fields accepted by Kimai POST /api/timesheets
-    const payload: Record<string, any> = {
+    const basePayload: Record<string, any> = {
       project: params.projectId,
       activity: params.activityId,
     };
 
     if (params.description && params.description.trim()) {
-      payload.description = params.description.trim();
+      basePayload.description = params.description.trim();
     }
 
     if (params.tags && params.tags.length > 0) {
-      payload.tags = params.tags.join(',');
+      basePayload.tags = params.tags.join(',');
     }
 
-    // Determine GPS coordinates to attach
-    let gps: GPSCoords | null = null;
-    if (this.config.gpsEnabled) {
-      if (params.gpsCoords) {
-        gps = params.gpsCoords;
-      } else if (this.config.useFallbackGPS) {
-        gps = {
-          latitude: this.config.fallbackLatitude || 19.432608,
-          longitude: this.config.fallbackLongitude || -99.133209,
-          accuracy: 10,
-          timestamp: Date.now(),
-          source: 'fallback',
-        };
+    const mode = this.config.gpsPluginMode || 'smart';
+    const gps = mode !== 'bypass' ? params.gpsCoords || null : null;
+
+    const latStr = gps ? gps.latitude.toFixed(6) : '';
+    const lonStr = gps ? gps.longitude.toFixed(6) : '';
+    const coordStr = gps ? `${latStr},${lonStr}` : '';
+
+    const createPayload = { ...basePayload };
+    if (gps) {
+      if (mode === 'metaFields' || mode === 'smart') {
+        createPayload.metaFields = [
+          { name: 'latitude', value: latStr },
+          { name: 'longitude', value: lonStr },
+        ];
+      } else if (mode === 'rootFields') {
+        createPayload.latitude = Number(latStr);
+        createPayload.longitude = Number(lonStr);
+        createPayload.location = coordStr;
+      } else if (mode === 'legacy') {
+        createPayload.metaFields = [
+          { name: 'geo_lat', value: latStr },
+          { name: 'geo_long', value: lonStr },
+        ];
       }
     }
 
-    const started = await this.request<KimaiTimesheet>('/timesheets', 'POST', payload, Boolean(gps));
+    let started: KimaiTimesheet;
+    try {
+      started = await this.request<KimaiTimesheet>('/timesheets', 'POST', createPayload, Boolean(gps));
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      // In 'smart' mode, if Kimai's Symfony form rejects extra fields on POST (400),
+      // retry with root fields and/or clean base payload and attach GPS via /meta endpoints.
+      if (gps && mode === 'smart' && msg.includes('400')) {
+        try {
+          started = await this.request<KimaiTimesheet>(
+            '/timesheets',
+            'POST',
+            {
+              ...basePayload,
+              latitude: Number(latStr),
+              longitude: Number(lonStr),
+              location: coordStr,
+            },
+            true
+          );
+        } catch {
+          started = await this.request<KimaiTimesheet>('/timesheets', 'POST', basePayload, true);
+        }
+      } else {
+        throw err;
+      }
+    }
 
-    // If timesheet was successfully started, attach GPS coordinates to KimaiMobileGPSInfoBundle
-    if (gps && started?.id && this.config.gpsPluginMode !== 'bypass') {
-      const coordStr = `${gps.latitude},${gps.longitude}`;
-      this.setMetaField(started.id, 'gps_start_location', coordStr).catch(() => {});
+    // Attach and verify GPS meta fields (KimaiMobileGPSInfoBundle & Custom MetaFields)
+    if (gps && started?.id && mode !== 'bypass') {
+      const metaTargets: KimaiMetaField[] = [];
+      const existingNames = new Set((started.metaFields || []).map((m) => m.name));
+
+      if (mode === 'smart') {
+        metaTargets.push({ name: 'gps_start_location', value: coordStr });
+        if (!existingNames.has('latitude')) metaTargets.push({ name: 'latitude', value: latStr });
+        if (!existingNames.has('longitude')) metaTargets.push({ name: 'longitude', value: lonStr });
+      } else if (mode === 'metaFields') {
+        if (!existingNames.has('latitude')) metaTargets.push({ name: 'latitude', value: latStr });
+        if (!existingNames.has('longitude')) metaTargets.push({ name: 'longitude', value: lonStr });
+        metaTargets.push({ name: 'gps_start_location', value: coordStr });
+      } else if (mode === 'rootFields') {
+        metaTargets.push({ name: 'gps_start_location', value: coordStr });
+      } else if (mode === 'legacy') {
+        if (!existingNames.has('geo_lat')) metaTargets.push({ name: 'geo_lat', value: latStr });
+        if (!existingNames.has('geo_long')) metaTargets.push({ name: 'geo_long', value: lonStr });
+      }
+
+      if (metaTargets.length > 0) {
+        const results = await Promise.all(
+          metaTargets.map((m) => this.setMetaField(started.id, m.name, m.value))
+        );
+        const persisted = metaTargets.filter((_, idx) => results[idx] !== null);
+        if (persisted.length > 0) {
+          started = {
+            ...started,
+            metaFields: mergeMetaFields(started.metaFields, persisted),
+          };
+        }
+      }
     }
 
     return started;
   }
 
   public async setMetaField(timesheetId: number, name: string, value: string): Promise<any> {
-    if (this.config.isDemoMode) return { name, value };
+    if (this.config.isDemoMode) {
+      return this.request(`/timesheets/${timesheetId}/meta`, 'PATCH', { name, value }, true);
+    }
     try {
-      return await this.request(`/timesheets/${timesheetId}/meta`, 'PATCH', { name, value });
+      return await this.request(`/timesheets/${timesheetId}/meta`, 'PATCH', { name, value }, true);
     } catch {
       return null;
     }
   }
 
   public async stopTimesheet(id: number, gpsCoords?: GPSCoords | null): Promise<KimaiTimesheet> {
-    const stopped = await this.request<KimaiTimesheet>(`/timesheets/${id}/stop`, 'PATCH');
+    const mode = this.config.gpsPluginMode || 'smart';
+    let gps = mode !== 'bypass' ? gpsCoords || null : null;
 
-    // Attach stop GPS location for KimaiMobileGPSInfoBundle
-    let gps = gpsCoords;
-    if (!gps && this.config.gpsEnabled && this.config.useFallbackGPS) {
+    if (!gps && mode !== 'bypass' && this.config.gpsEnabled && this.config.useFallbackGPS) {
       gps = {
         latitude: this.config.fallbackLatitude || 19.432608,
         longitude: this.config.fallbackLongitude || -99.133209,
@@ -371,9 +500,45 @@ export class KimaiApiClient {
       };
     }
 
-    if (gps && id && this.config.gpsPluginMode !== 'bypass') {
-      const coordStr = `${gps.latitude},${gps.longitude}`;
-      this.setMetaField(id, 'gps_stop_location', coordStr).catch(() => {});
+    const persistedStopMeta: KimaiMetaField[] = [];
+
+    // Persist stop GPS coordinates while timesheet is active (before stopping)
+    // so servers that lock stopped timesheets or evaluate stop listeners receive them.
+    if (gps && id && mode !== 'bypass') {
+      const latStr = gps.latitude.toFixed(6);
+      const lonStr = gps.longitude.toFixed(6);
+      const coordStr = `${latStr},${lonStr}`;
+
+      const stopTargets: KimaiMetaField[] = [{ name: 'gps_stop_location', value: coordStr }];
+      if (mode === 'legacy') {
+        stopTargets.push(
+          { name: 'geo_stop_lat', value: latStr },
+          { name: 'geo_stop_long', value: lonStr }
+        );
+      }
+
+      const results = await Promise.all(
+        stopTargets.map((m) => this.setMetaField(id, m.name, m.value))
+      );
+      stopTargets.forEach((m, idx) => {
+        if (results[idx] !== null) {
+          persistedStopMeta.push(m);
+        }
+      });
+    }
+
+    const stopped = await this.request<KimaiTimesheet>(
+      `/timesheets/${id}/stop`,
+      'PATCH',
+      undefined,
+      Boolean(gps)
+    );
+
+    if (persistedStopMeta.length > 0) {
+      return {
+        ...stopped,
+        metaFields: mergeMetaFields(stopped.metaFields, persistedStopMeta),
+      };
     }
 
     return stopped;

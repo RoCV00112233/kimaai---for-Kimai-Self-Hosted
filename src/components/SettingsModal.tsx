@@ -1,18 +1,17 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { KimaiConfig, KimaiUser } from '../types/kimai';
 import {
   X,
   Server,
   Key,
   User,
-  ShieldCheck,
   Check,
   AlertCircle,
+  AlertTriangle,
   RefreshCw,
   Compass,
-  Sliders,
-  ExternalLink,
-  HelpCircle,
+  LogOut,
+  Trash2,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -21,6 +20,7 @@ interface SettingsModalProps {
   config: KimaiConfig;
   onSaveConfig: (newConfig: KimaiConfig) => void;
   onTestConnection: (cfg: KimaiConfig) => Promise<{ success: boolean; message: string; user?: KimaiUser }>;
+  onLogout?: () => Promise<void> | void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -29,12 +29,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   config,
   onSaveConfig,
   onTestConnection,
+  onLogout,
 }) => {
   const [form, setForm] = useState<KimaiConfig>({ ...config });
   const [isTesting, setIsTesting] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [confirmLogout, setConfirmLogout] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setForm({ ...config });
+      setTestResult(null);
+      setConfirmLogout(false);
+    }
+  }, [isOpen, config]);
 
   if (!isOpen) return null;
+
+  const isInsecureHttp = !form.isDemoMode && form.baseUrl.trim().toLowerCase().startsWith('http://');
 
   const handleTest = async () => {
     setIsTesting(true);
@@ -54,7 +66,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveConfig(form);
+    onSaveConfig({
+      ...form,
+      baseUrl: form.baseUrl.trim().replace(/\/+$/, ''),
+      username: form.username.trim(),
+      apiToken: form.apiToken.trim(),
+    });
+    onClose();
+  };
+
+  const handleConfirmLogout = async () => {
+    if (!onLogout) return;
+    await onLogout();
     onClose();
   };
 
@@ -74,6 +97,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
           >
@@ -82,7 +106,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Scrollable Form */}
-        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-5 space-y-4">
+        <form onSubmit={handleSave} autoComplete="off" className="flex-1 overflow-y-auto p-5 space-y-4">
           {/* Mode Selector: Demo vs Real Kimai */}
           <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5 flex items-center justify-between">
             <div>
@@ -116,12 +140,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   placeholder="https://kimai.tu-empresa.com"
                   value={form.baseUrl}
                   onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 font-mono"
                 />
               </div>
               <p className="text-[10px] text-slate-500 mt-1">
                 Ejemplo: https://kimai.dominio.com (sin /api al final, se añade automáticamente)
               </p>
+              {isInsecureHttp && (
+                <div className="mt-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 flex items-start gap-1.5 text-[11px] text-amber-300">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                  <span>
+                    Advertencia de seguridad: HTTP sin cifrar expone tu Token en la red y está bloqueado en Android Release. Usa HTTPS.
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -136,6 +172,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     placeholder="susan_super"
                     value={form.username}
                     onChange={(e) => setForm({ ...form, username: e.target.value })}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500"
                   />
                 </div>
@@ -152,6 +192,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     placeholder="api_token_..."
                     value={form.apiToken}
                     onChange={(e) => setForm({ ...form, apiToken: e.target.value })}
+                    autoComplete="new-password"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 font-mono"
                   />
                 </div>
@@ -203,7 +247,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                   )}
                   <div className="flex-1">
-                    <p className="font-semibold">{testResult.success ? 'Conexión Exitosa' : 'Fallo de Conexión'}</p>
+                    <p className="font-semibold">
+                      {testResult.success ? 'Conexión Exitosa' : 'Fallo de Conexión'}
+                    </p>
                     <p className="text-[11px] mt-0.5">{testResult.message}</p>
                   </div>
                 </div>
@@ -240,6 +286,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </label>
             </div>
           </div>
+
+          {/* Session & Credential Wipe */}
+          {onLogout && (
+            <div className="rounded-2xl bg-rose-950/20 border border-rose-500/20 p-3.5 space-y-2">
+              {!confirmLogout ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmLogout(true)}
+                  className="w-full py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold flex items-center justify-center gap-2 border border-rose-500/30 transition cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Cerrar Sesión y Borrar Credenciales</span>
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-rose-200 text-center">
+                    ¿Confirmas eliminar el Token de API y las llaves cifradas de este dispositivo?
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmLogout(false)}
+                      className="flex-1 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmLogout}
+                      className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Borrar Todo</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="pt-2 flex items-center gap-3">

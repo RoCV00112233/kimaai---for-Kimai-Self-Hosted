@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
 import { KimaiConfig } from '../types/kimai';
-import { Server, Key, User, ShieldCheck, ArrowRight, Play, Eye, EyeOff, AlertCircle, RefreshCw } from 'lucide-react';
+import {
+  Server,
+  Key,
+  User,
+  ShieldCheck,
+  ArrowRight,
+  Play,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  AlertTriangle,
+  RefreshCw,
+} from 'lucide-react';
 import { SteampunkClockIcon } from './SteampunkClockIcon';
 
 interface SetupScreenProps {
@@ -17,6 +29,8 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const isInsecureHttp = baseUrl.trim().toLowerCase().startsWith('http://');
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!baseUrl.trim()) {
@@ -31,7 +45,6 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
     setIsLoading(true);
     setErrorMessage(null);
 
-    // Format clean URL (no trailing slash)
     const cleanUrl = baseUrl.trim().replace(/\/+$/, '');
 
     const newConfig: KimaiConfig = {
@@ -57,7 +70,8 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
       await onSave(newConfig);
     } catch (err: any) {
       setErrorMessage(
-        err.message || 'No se pudo conectar con el servidor Kimai. Verifica que la URL y el Token sean correctos.'
+        err.message ||
+          'No se pudo conectar con el servidor Kimai. Verifica que la URL y el Token sean correctos.'
       );
     } finally {
       setIsLoading(false);
@@ -100,7 +114,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
         )}
 
         {/* Setup Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
               URL del Servidor Kimai <span className="text-emerald-400">*</span>
@@ -112,13 +126,25 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
                 placeholder="https://tt.tu-empresa.com"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 required
                 className="w-full pl-9.5 pr-3 py-2.5 text-xs rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 font-mono"
               />
             </div>
             <p className="text-[10px] text-slate-500 mt-1">
-              Ingresa la URL base (sin /api al final)
+              Ingresa la URL base HTTPS (sin /api al final)
             </p>
+            {isInsecureHttp && (
+              <div className="mt-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 flex items-start gap-1.5 text-[11px] text-amber-300">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <span>
+                  Conexión HTTP sin cifrar: las compilaciones Android Release bloquean tráfico HTTP por seguridad para proteger tu Token de API. Usa HTTPS.
+                </span>
+              </div>
+            )}
           </div>
 
           <div>
@@ -132,6 +158,10 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
                 placeholder="Generado en Perfil de Kimai &rarr; API"
                 value={apiToken}
                 onChange={(e) => setApiToken(e.target.value)}
+                autoComplete="new-password"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 required
                 className="w-full pl-9.5 pr-10 py-2.5 text-xs rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 font-mono"
               />
@@ -159,6 +189,10 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
                 placeholder="test01 o usuario@correo.com"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 className="w-full pl-9.5 pr-3 py-2.5 text-xs rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -172,7 +206,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onSave, onStartDemo })
                 <span>Proxy CORS Integrado</span>
               </p>
               <p className="text-[10px] text-slate-400 mt-0.5">
-                Omite restricciones del navegador en servidores auto-hosteados
+                Solo para versión web si el servidor no tiene CORS configurado
               </p>
             </div>
 

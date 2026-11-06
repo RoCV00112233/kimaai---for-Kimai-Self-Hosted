@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import {
   GPSCoords,
   GPSPluginMode,
@@ -9,12 +10,19 @@ import {
   KimaiTimesheet,
   KimaiUser,
 } from './types/kimai';
-import { loadStoredConfig, saveStoredConfig } from './services/storage';
+import {
+  clearStoredConfig,
+  DEFAULT_CONFIG,
+  hydrateStoredConfig,
+  loadStoredConfig,
+  saveStoredConfig,
+  saveStoredConfigAsync,
+} from './services/storage';
 import { KimaiApiClient } from './services/kimaiApi';
 import { useGeolocation } from './hooks/useGeolocation';
 import { Header } from './components/Header';
 import { ActiveTimer } from './components/ActiveTimer';
-import { StartTaskModal } from './components/StartTaskModal';
+import { StartTaskModal, isMandatoryMovilTag } from './components/StartTaskModal';
 import { TimesheetHistory } from './components/TimesheetHistory';
 import { GpsDiagnostics } from './components/GpsDiagnostics';
 import { AboutModal } from './components/AboutModal';
@@ -23,10 +31,23 @@ import { BottomNav, NavTab } from './components/BottomNav';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { SetupScreen } from './components/SetupScreen';
 import { PullToRefresh } from './components/PullToRefresh';
-import { AlertCircle, RefreshCw, Zap } from 'lucide-react';
+import { AlertCircle, ShieldAlert } from 'lucide-react';
+
+interface SecurityAuditResult {
+  isRooted: boolean;
+  isDebuggable: boolean;
+  indicators: string[];
+}
+
+interface SecurityAuditPlugin {
+  checkDeviceSecurity(): Promise<SecurityAuditResult>;
+}
+
+const SecurityAudit = registerPlugin<SecurityAuditPlugin>('SecurityAudit');
 
 export default function App() {
   const [config, setConfig] = useState<KimaiConfig>(loadStoredConfig);
+  const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<NavTab>('timer');
   const [user, setUser] = useState<KimaiUser | null>(null);
   const [activeTimesheet, setActiveTimesheet] = useState<KimaiTimesheet | null>(null);
@@ -39,6 +60,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isStopping, setIsStopping] = useState<boolean>(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [securityWarning, setSecurityWarning] = useState<string | null>(null);
 
   // Modals state
   const [isStartModalOpen, setIsStartModalOpen] = useState<boolean>(false);
@@ -53,6 +75,40 @@ export default function App() {
   // Geolocation hook
   const { coords: gpsCoords, isLoading: gpsLoading, refreshLocation } = useGeolocation(true);
 
+  // Hydrate AES-GCM encrypted credentials and check Android device integrity on mount
+  useEffect(() => {
+    let active = true;
+
+    hydrateStoredConfig()
+      .then((hydrated) => {
+        if (!active) return;
+        setConfig(hydrated);
+        setIsHydrated(true);
+      })
+      .catch(() => {
+        if (active) setIsHydrated(true);
+      });
+
+    if (Capacitor.isNativePlatform()) {
+      SecurityAudit.checkDeviceSecurity()
+        .then((res) => {
+          if (!active) return;
+          if (res?.isRooted) {
+            setSecurityWarning(
+              'Advertencia de seguridad: Se detectó acceso Root o entorno modificado en el dispositivo. Protege tu Token de API.'
+            );
+          }
+        })
+        .catch(() => {
+          // Plugin unavailable on web or older shells
+        });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Kimai API Client instance
   const apiClient = useMemo(() => new KimaiApiClient(config), [config]);
 
@@ -65,9 +121,7 @@ export default function App() {
         .then((lock) => {
           wakeLockRef.current = lock;
         })
-        .catch(() => {
-          // Wake lock request failed or unpermitted
-        });
+        .catch(() => {});
     } else if (wakeLockRef.current) {
       wakeLockRef.current.release().catch(() => {});
       wakeLockRef.current = null;
@@ -119,7 +173,6 @@ export default function App() {
     setIsLoading(true);
     setErrorBanner(null);
     try {
-      // Fetch active timer, user profile, projects, activities, customers, tags, history in parallel
       const [userRes, activeRes, projsRes, actsRes, custsRes, tagsRes, recentRes] =
         await Promise.allSettled([
           apiClient.getCurrentUser(),
@@ -161,7 +214,6 @@ export default function App() {
         setRecentTimesheets([]);
       }
 
-      // Check if primary calls failed
       if (activeRes.status === 'rejected' && !config.isDemoMode) {
         setErrorBanner(
           `No se pudo conectar a Kimai: ${(activeRes.reason as any)?.message || 'Verifica tus credenciales en Ajustes'}`
@@ -177,15 +229,16 @@ export default function App() {
   }, [apiClient, config.isDemoMode]);
 
   useEffect(() => {
-    if (!config.isConfigured) return;
+    if (!isHydrated || !config.isConfigured) return;
     fetchData();
-    // Refresh GPS on startup in background
-    refreshLocation();
-  }, [fetchData, refreshLocation, config.isConfigured]);
+    if (config.gpsEnabled) {
+      refreshLocation();
+    }
+  }, [fetchData, refreshLocation, isHydrated, config.isConfigured, config.gpsEnabled]);
 
   // Periodic polling for active timesheet
   useEffect(() => {
-    if (!config.isConfigured) return;
+    if (!isHydrated || !config.isConfigured) return;
     const intervalSec = config.autoRefreshInterval || 30;
     const interval = setInterval(async () => {
       try {
@@ -199,20 +252,65 @@ export default function App() {
     }, intervalSec * 1000);
 
     return () => clearInterval(interval);
-  }, [apiClient, config.autoRefreshInterval, config.isConfigured]);
+  }, [apiClient, config.autoRefreshInterval, config.isConfigured, isHydrated]);
 
-  // Start task handler with GPS coordinates and instant feedback
+  // Helper to obtain fresh device coordinates with bounded wait before fallback
+  const resolveGpsForAction = useCallback(
+    async (provided?: GPSCoords | null, maxWaitMs: number = 6000): Promise<GPSCoords | null> => {
+      const isFreshDevice = (c: GPSCoords | null | undefined): c is GPSCoords =>
+        Boolean(c && c.source === 'device' && Date.now() - c.timestamp < 120_000);
+
+      if (isFreshDevice(provided)) return provided;
+      if (isFreshDevice(gpsCoords)) return gpsCoords;
+
+      const fresh = await Promise.race<GPSCoords | null>([
+        refreshLocation(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), maxWaitMs)),
+      ]);
+
+      if (fresh) return fresh;
+      if (provided) return provided;
+      if (gpsCoords) return gpsCoords;
+
+      if (config.useFallbackGPS) {
+        return {
+          latitude: config.fallbackLatitude || 19.432608,
+          longitude: config.fallbackLongitude || -99.133209,
+          accuracy: 10,
+          timestamp: Date.now(),
+          source: 'fallback',
+        };
+      }
+      return null;
+    },
+    [gpsCoords, refreshLocation, config.useFallbackGPS, config.fallbackLatitude, config.fallbackLongitude]
+  );
+
+  // Start task handler with live GPS capture and mandatory "movil" tag enforcement
   const handleStartTask = async (params: {
     projectId: number;
     activityId: number;
     description?: string;
     tags?: string[];
     gpsCoords?: GPSCoords | null;
+    includeGps?: boolean;
   }) => {
-    // 1. Play sound immediately (< 10ms feedback)
+    const shouldUseGps = params.includeGps ?? config.gpsEnabled;
+    const mandatoryMovil = tags.filter(isMandatoryMovilTag);
+    const finalTags = Array.from(new Set([...mandatoryMovil, ...(params.tags || [])]));
+
+    let coordsToUse: GPSCoords | null = null;
+    if (shouldUseGps) {
+      coordsToUse = await resolveGpsForAction(params.gpsCoords, 6000);
+      if (!coordsToUse && config.requireGPS) {
+        throw new Error(
+          'Se requiere señal GPS para iniciar la tarea. Verifica que la ubicación esté activada.'
+        );
+      }
+    }
+
     playSound('start');
 
-    // 2. Optimistic UI update so stopwatch begins immediately
     const optimisticBegin = new Date().toISOString();
     const optimisticTimesheet: KimaiTimesheet = {
       id: Date.now(),
@@ -223,75 +321,72 @@ export default function App() {
       project: params.projectId,
       activity: params.activityId,
       description: params.description || '',
-      tags: params.tags || [],
+      tags: finalTags,
     };
     setActiveTimesheet(optimisticTimesheet);
     setCurrentTab('timer');
 
-    // 3. Fast GPS coordinate determination (never wait 10 seconds!)
-    const coordsToUse = params.gpsCoords || gpsCoords || (config.useFallbackGPS ? {
-      latitude: config.fallbackLatitude || 19.432608,
-      longitude: config.fallbackLongitude || -99.133209,
-      accuracy: 10,
-      timestamp: Date.now(),
-      source: 'fallback' as const,
-    } : null);
-
-    // 4. Send API call in background
     try {
       const started = await apiClient.startTimesheet({
         projectId: params.projectId,
         activityId: params.activityId,
         description: params.description,
-        tags: params.tags,
+        tags: finalTags,
         gpsCoords: coordsToUse,
       });
 
-      // Update with server confirmed timesheet
       setActiveTimesheet(started);
-      // Refresh history in background
-      apiClient.getRecentTimesheets(30).then((res) => {
-        if (Array.isArray(res)) setRecentTimesheets(res);
-      }).catch(() => {});
+      apiClient
+        .getRecentTimesheets(30)
+        .then((res) => {
+          if (Array.isArray(res)) setRecentTimesheets(res);
+        })
+        .catch(() => {});
     } catch (err: any) {
       console.error('Failed to start timesheet on server:', err);
-      // Rollback optimistic active timer if server rejected
       setActiveTimesheet(null);
-      alert(`Error al iniciar tarea en Kimai: ${err.message}`);
+      setErrorBanner(`Error al iniciar tarea en Kimai: ${err.message}`);
+      throw err;
     }
   };
 
-  // Stop task handler
+  // Stop task handler with live stop GPS capture
   const handleStopTask = async () => {
     if (!activeTimesheet) return;
     setIsStopping(true);
+    setErrorBanner(null);
     try {
-      await apiClient.stopTimesheet(activeTimesheet.id);
+      let stopCoords: GPSCoords | null = null;
+      if (config.gpsEnabled) {
+        stopCoords = await resolveGpsForAction(gpsCoords, 5000);
+      }
+
+      await apiClient.stopTimesheet(activeTimesheet.id, stopCoords);
       setActiveTimesheet(null);
       playSound('stop');
-      // Refresh recent timesheets
+
       const freshHistory = await apiClient.getRecentTimesheets(30);
       setRecentTimesheets(freshHistory);
     } catch (err: any) {
-      alert(`Error al detener tarea: ${err.message}`);
+      setErrorBanner(`Error al detener tarea: ${err.message}`);
     } finally {
       setIsStopping(false);
     }
   };
 
   // Open start modal with instant catalog refresh
-  const handleOpenStartModal = (defaults: {
-    projectId?: number;
-    activityId?: number;
-    description?: string;
-  } = {}) => {
+  const handleOpenStartModal = (
+    defaults: {
+      projectId?: number;
+      activityId?: number;
+      description?: string;
+    } = {}
+  ) => {
     setResumeDefaults(defaults);
     setIsStartModalOpen(true);
-    // Refresh catalog from Kimai server so any newly added customers/projects/activities appear
     fetchData();
   };
 
-  // Quick resume task
   const handleResumeTask = (projectId: number, activityId: number, desc?: string) => {
     handleOpenStartModal({
       projectId,
@@ -300,11 +395,9 @@ export default function App() {
     });
   };
 
-  // Update configuration
-  const handleSaveConfig = (newConfig: KimaiConfig) => {
+  const handleSaveConfig = async (newConfig: KimaiConfig) => {
     setConfig(newConfig);
-    saveStoredConfig(newConfig);
-    // Reload data with new config
+    await saveStoredConfigAsync(newConfig);
     setTimeout(() => fetchData(), 100);
   };
 
@@ -319,7 +412,19 @@ export default function App() {
     handleUpdateConfigPartial({ isDemoMode: nextMode });
   };
 
-  // Connection test
+  const handleLogout = async () => {
+    await clearStoredConfig();
+    setUser(null);
+    setActiveTimesheet(null);
+    setRecentTimesheets([]);
+    setProjects([]);
+    setActivities([]);
+    setCustomers([]);
+    setTags([]);
+    setErrorBanner(null);
+    setConfig(DEFAULT_CONFIG);
+  };
+
   const handleTestConnection = async (cfg: KimaiConfig) => {
     const tempClient = new KimaiApiClient(cfg);
     const pingRes = await tempClient.ping();
@@ -331,7 +436,6 @@ export default function App() {
     };
   };
 
-  // Extract recent tasks for quick-resume chips safely
   const recentQuickTasks = useMemo(() => {
     const list: Array<{
       projectId: number;
@@ -345,8 +449,10 @@ export default function App() {
 
     (recentTimesheets || []).forEach((t) => {
       if (!t) return;
-      const pId = typeof t.project === 'object' && t.project !== null ? t.project.id : Number(t.project);
-      const aId = typeof t.activity === 'object' && t.activity !== null ? t.activity.id : Number(t.activity);
+      const pId =
+        typeof t.project === 'object' && t.project !== null ? t.project.id : Number(t.project);
+      const aId =
+        typeof t.activity === 'object' && t.activity !== null ? t.activity.id : Number(t.activity);
       if (!pId || !aId) return;
       const key = `${pId}-${aId}`;
 
@@ -355,9 +461,19 @@ export default function App() {
         const foundProj = projects.find((p) => p.id === pId);
         const foundAct = activities.find((a) => a.id === aId);
 
-        const pName = foundProj?.name || (typeof t.project === 'object' && t.project !== null ? t.project.name : `Proyecto #${pId}`);
-        const pColor = foundProj?.color || (typeof t.project === 'object' && t.project !== null ? t.project.color : '#10B981');
-        const aName = foundAct?.name || (typeof t.activity === 'object' && t.activity !== null ? t.activity.name : `Actividad #${aId}`);
+        const pName =
+          foundProj?.name ||
+          (typeof t.project === 'object' && t.project !== null
+            ? t.project.name
+            : `Proyecto #${pId}`);
+        const pColor =
+          foundProj?.color ||
+          (typeof t.project === 'object' && t.project !== null ? t.project.color : '#10B981');
+        const aName =
+          foundAct?.name ||
+          (typeof t.activity === 'object' && t.activity !== null
+            ? t.activity.name
+            : `Actividad #${aId}`);
 
         list.push({
           projectId: pId,
@@ -372,42 +488,41 @@ export default function App() {
     return list.slice(0, 4);
   }, [recentTimesheets, projects, activities]);
 
-  // Initial onboarding handlers
   const handleSaveInitialConfig = async (newConfig: KimaiConfig) => {
     const tempClient = new KimaiApiClient(newConfig);
-    // Validate connection by pinging
     await tempClient.ping();
     await tempClient.getCurrentUser();
+    await saveStoredConfigAsync(newConfig);
     setConfig(newConfig);
-    saveStoredConfig(newConfig);
   };
 
-  const handleStartDemo = () => {
+  const handleStartDemo = async () => {
     const demoCfg: KimaiConfig = {
       ...config,
       isDemoMode: true,
       isConfigured: true,
     };
+    await saveStoredConfigAsync(demoCfg);
     setConfig(demoCfg);
-    saveStoredConfig(demoCfg);
   };
 
-  if (!config.isConfigured) {
+  if (!isHydrated) {
     return (
-      <SetupScreen
-        onSave={handleSaveInitialConfig}
-        onStartDemo={handleStartDemo}
-      />
+      <div className="min-h-screen bg-[#070a11] text-slate-300 flex items-center justify-center p-4">
+        <div className="text-xs font-mono text-slate-400">Inicializando Kimaai...</div>
+      </div>
     );
+  }
+
+  if (!config.isConfigured) {
+    return <SetupScreen onSave={handleSaveInitialConfig} onStartDemo={handleStartDemo} />;
   }
 
   return (
     <div className="min-h-screen bg-[#070a11] text-slate-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200">
       <OfflineIndicator />
 
-      {/* Pull To Refresh Mobile Container */}
       <PullToRefresh onRefresh={fetchData} isRefreshing={isLoading}>
-        {/* Header */}
         <Header
           config={config}
           user={user}
@@ -419,7 +534,24 @@ export default function App() {
           onToggleDemoMode={handleToggleDemoMode}
         />
 
-        {/* Error banner if connection failed */}
+        {/* Root / Environment Security Warning Banner */}
+        {securityWarning && (
+          <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-xs text-amber-200 flex items-center justify-between gap-2 max-w-xl mx-auto w-full">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{securityWarning}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSecurityWarning(null)}
+              className="text-[11px] underline text-amber-300 hover:text-white shrink-0 cursor-pointer"
+            >
+              Ocultar
+            </button>
+          </div>
+        )}
+
+        {/* Error banner if connection or action failed */}
         {errorBanner && (
           <div className="bg-rose-500/15 border-b border-rose-500/30 px-4 py-2.5 text-xs text-rose-300 flex items-center justify-between gap-2 max-w-xl mx-auto w-full">
             <div className="flex items-center gap-2">
@@ -428,14 +560,16 @@ export default function App() {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
+                type="button"
                 onClick={handleToggleDemoMode}
-                className="text-[11px] underline text-rose-200 hover:text-white"
+                className="text-[11px] underline text-rose-200 hover:text-white cursor-pointer"
               >
                 Usar Modo Demo
               </button>
               <button
+                type="button"
                 onClick={() => setIsSettingsModalOpen(true)}
-                className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-200 text-[11px] font-medium"
+                className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-200 text-[11px] font-medium cursor-pointer"
               >
                 Ajustes
               </button>
@@ -459,7 +593,6 @@ export default function App() {
                 activities={activities}
               />
 
-              {/* Quick Timesheet Mini Preview */}
               <div className="pt-2">
                 <TimesheetHistory
                   timesheets={recentTimesheets.slice(0, 10)}
@@ -506,6 +639,7 @@ export default function App() {
         tags={tags}
         gpsCoords={gpsCoords}
         gpsLoading={gpsLoading}
+        gpsEnabled={config.gpsEnabled}
         onRefreshGps={refreshLocation}
         onRefreshCatalog={fetchData}
         isRefreshingCatalog={isLoading}
@@ -514,7 +648,9 @@ export default function App() {
         defaultActivityId={resumeDefaults.activityId}
         defaultDescription={resumeDefaults.description}
         gpsPluginMode={config.gpsPluginMode}
-        onChangeGpsPluginMode={(mode: GPSPluginMode) => handleUpdateConfigPartial({ gpsPluginMode: mode })}
+        onChangeGpsPluginMode={(mode: GPSPluginMode) =>
+          handleUpdateConfigPartial({ gpsPluginMode: mode })
+        }
       />
 
       {/* Settings Modal */}
@@ -524,13 +660,11 @@ export default function App() {
         config={config}
         onSaveConfig={handleSaveConfig}
         onTestConnection={handleTestConnection}
+        onLogout={handleLogout}
       />
 
       {/* About Modal */}
-      <AboutModal
-        isOpen={isAboutModalOpen}
-        onClose={() => setIsAboutModalOpen(false)}
-      />
+      <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} />
 
       {/* Bottom Navigation */}
       <BottomNav

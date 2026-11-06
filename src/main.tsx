@@ -52,6 +52,7 @@ class GlobalErrorBoundary extends Component<Props, State> {
               </button>
               <button
                 onClick={() => {
+                  localStorage.removeItem('kimaai_kimai_config_v3');
                   localStorage.removeItem('codetimer_kimai_config_v2');
                   window.location.reload();
                 }}

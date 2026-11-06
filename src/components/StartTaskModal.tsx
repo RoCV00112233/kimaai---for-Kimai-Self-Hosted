@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   GPSCoords,
   GPSPluginMode,
@@ -11,7 +11,7 @@ import {
   Play,
   Search,
   MapPin,
-  Tag,
+  Lock,
   AlertCircle,
   RefreshCw,
   Sliders,
@@ -20,6 +20,15 @@ import {
   Users,
   Briefcase,
 } from 'lucide-react';
+
+export function isMandatoryMovilTag(tagName: string): boolean {
+  const normalized = tagName
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return normalized === 'movil';
+}
 
 interface StartTaskModalProps {
   isOpen: boolean;
@@ -30,6 +39,7 @@ interface StartTaskModalProps {
   tags: string[];
   gpsCoords: GPSCoords | null;
   gpsLoading: boolean;
+  gpsEnabled?: boolean;
   onRefreshGps: () => void;
   onRefreshCatalog?: () => Promise<void>;
   isRefreshingCatalog?: boolean;
@@ -39,6 +49,7 @@ interface StartTaskModalProps {
     description?: string;
     tags?: string[];
     gpsCoords?: GPSCoords | null;
+    includeGps?: boolean;
   }) => Promise<void>;
   defaultProjectId?: number;
   defaultActivityId?: number;
@@ -56,6 +67,7 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
   tags,
   gpsCoords,
   gpsLoading,
+  gpsEnabled = true,
   onRefreshGps,
   onStart,
   defaultProjectId,
@@ -66,16 +78,7 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
   onRefreshCatalog,
   isRefreshingCatalog = false,
 }) => {
-  // Find customer of default project if passed
-  const initialCustomerId = useMemo(() => {
-    if (defaultProjectId) {
-      const p = projects.find((proj) => proj.id === defaultProjectId);
-      if (p && p.customer) return p.customer;
-    }
-    return 'all';
-  }, [defaultProjectId, projects]);
-
-  const [selectedCustomerId, setSelectedCustomerId] = useState<number | 'all'>(initialCustomerId);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | 'all'>('all');
   const [selectedProjectId, setSelectedProjectId] = useState<number | undefined>(
     defaultProjectId || projects[0]?.id
   );
@@ -86,10 +89,82 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchCustomerQuery, setSearchCustomerQuery] = useState<string>('');
   const [searchProjectQuery, setSearchProjectQuery] = useState<string>('');
-  const [includeGps, setIncludeGps] = useState<boolean>(true);
+  const [includeGps, setIncludeGps] = useState<boolean>(gpsEnabled);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showAdvancedGps, setShowAdvancedGps] = useState<boolean>(false);
+
+  const mandatoryTags = useMemo(() => tags.filter(isMandatoryMovilTag), [tags]);
+
+  const orderedTags = useMemo(
+    () =>
+      [...tags].sort(
+        (a, b) => Number(isMandatoryMovilTag(b)) - Number(isMandatoryMovilTag(a))
+      ),
+    [tags]
+  );
+
+  // Sync form defaults and activate mandatory "movil" tag whenever the modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+
+    setErrorMessage(null);
+    setSearchCustomerQuery('');
+    setSearchProjectQuery('');
+
+    const targetProjectId =
+      defaultProjectId && projects.some((p) => p.id === defaultProjectId)
+        ? defaultProjectId
+        : projects[0]?.id;
+    setSelectedProjectId(targetProjectId);
+
+    const targetProject = projects.find((p) => p.id === targetProjectId);
+    setSelectedCustomerId(targetProject?.customer || 'all');
+
+    const validActs = targetProjectId
+      ? activities.filter((a) => !a.project || a.project === targetProjectId)
+      : activities;
+    const targetActivityId =
+      defaultActivityId && validActs.some((a) => a.id === defaultActivityId)
+        ? defaultActivityId
+        : validActs[0]?.id ?? activities[0]?.id;
+    setSelectedActivityId(targetActivityId);
+
+    setDescription(defaultDescription || '');
+    setIncludeGps(gpsEnabled);
+    setSelectedTags(tags.filter(isMandatoryMovilTag));
+  }, [isOpen, defaultProjectId, defaultActivityId, defaultDescription, gpsEnabled]);
+
+  // Ensure mandatory "movil" tag stays active if tags catalog refreshes while modal is open
+  useEffect(() => {
+    if (!isOpen || mandatoryTags.length === 0) return;
+    setSelectedTags((prev) => {
+      const missing = mandatoryTags.filter((mt) => !prev.includes(mt));
+      return missing.length > 0 ? [...missing, ...prev] : prev;
+    });
+  }, [isOpen, mandatoryTags]);
+
+  // Populate initial project/activity if catalogs finish loading while modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!selectedProjectId && projects.length > 0) {
+      const firstProj = projects[0];
+      setSelectedProjectId(firstProj.id);
+      if (firstProj.customer) {
+        setSelectedCustomerId(firstProj.customer);
+      }
+    }
+    if (!selectedActivityId && activities.length > 0) {
+      setSelectedActivityId(activities[0].id);
+    }
+  }, [isOpen, projects, activities, selectedProjectId, selectedActivityId]);
+
+  // Capture live GPS automatically when modal opens with GPS enabled
+  useEffect(() => {
+    if (isOpen && gpsEnabled) {
+      onRefreshGps();
+    }
+  }, [isOpen, gpsEnabled, onRefreshGps]);
 
   // Map project count per customer
   const projectCountByCustomer = useMemo(() => {
@@ -138,17 +213,6 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
     );
   }, [activities, selectedProjectId]);
 
-  // If user selects a customer, update filtered projects and select first project
-  const handleSelectCustomer = (custId: number | 'all') => {
-    setSelectedCustomerId(custId);
-    if (custId === 'all') return;
-    const custProjects = projects.filter((p) => p.customer === custId);
-    if (custProjects.length > 0 && (!selectedProjectId || !custProjects.some((p) => p.id === selectedProjectId))) {
-      handleSelectProject(custProjects[0].id);
-    }
-  };
-
-  // If selected activity is not valid for newly selected project, reset it
   const handleSelectProject = (projId: number) => {
     setSelectedProjectId(projId);
     const proj = projects.find((p) => p.id === projId);
@@ -161,7 +225,25 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
     }
   };
 
+  const handleSelectCustomer = (custId: number | 'all') => {
+    setSelectedCustomerId(custId);
+    if (custId === 'all') return;
+    const custProjects = projects.filter((p) => p.customer === custId);
+    if (
+      custProjects.length > 0 &&
+      (!selectedProjectId || !custProjects.some((p) => p.id === selectedProjectId))
+    ) {
+      handleSelectProject(custProjects[0].id);
+    }
+  };
+
   const toggleTag = (tagName: string) => {
+    if (isMandatoryMovilTag(tagName)) {
+      if (!selectedTags.includes(tagName)) {
+        setSelectedTags([tagName, ...selectedTags]);
+      }
+      return;
+    }
     if (selectedTags.includes(tagName)) {
       setSelectedTags(selectedTags.filter((t) => t !== tagName));
     } else {
@@ -179,13 +261,16 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
     setIsSubmitting(true);
     setErrorMessage(null);
 
+    const finalTags = Array.from(new Set([...mandatoryTags, ...selectedTags]));
+
     try {
       await onStart({
         projectId: selectedProjectId,
         activityId: selectedActivityId,
         description: description.trim(),
-        tags: selectedTags,
+        tags: finalTags,
         gpsCoords: includeGps ? gpsCoords : null,
+        includeGps,
       });
       onClose();
     } catch (err: any) {
@@ -209,7 +294,9 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white leading-tight">Iniciar Tarea</h2>
-              <p className="text-[11px] text-slate-400">Selecciona cliente, proyecto, actividad y telemetría</p>
+              <p className="text-[11px] text-slate-400">
+                Selecciona cliente, proyecto, actividad y telemetría
+              </p>
             </div>
           </div>
 
@@ -222,11 +309,14 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
                 className="p-1.5 rounded-xl text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition cursor-pointer disabled:opacity-50"
                 title="Actualizar clientes, proyectos y actividades desde Kimai"
               >
-                <RefreshCw className={`w-4 h-4 ${isRefreshingCatalog ? 'animate-spin text-amber-400' : ''}`} />
+                <RefreshCw
+                  className={`w-4 h-4 ${isRefreshingCatalog ? 'animate-spin text-amber-400' : ''}`}
+                />
               </button>
             )}
 
             <button
+              type="button"
               onClick={onClose}
               className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
             >
@@ -294,7 +384,6 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
             )}
 
             <div className="max-h-32 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/40 p-1 space-y-1">
-              {/* Option: Todos los clientes */}
               <button
                 type="button"
                 onClick={() => handleSelectCustomer('all')}
@@ -311,7 +400,6 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
                 <span className="text-[10px] text-slate-500">{projects.length} proyectos</span>
               </button>
 
-              {/* Individual customers */}
               {filteredCustomers.map((c) => {
                 const isSelected = selectedCustomerId === c.id;
                 const count = projectCountByCustomer[c.id] || 0;
@@ -357,7 +445,9 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                 <Briefcase className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Proyecto <span className="text-emerald-400">*</span></span>
+                <span>
+                  Proyecto <span className="text-emerald-400">*</span>
+                </span>
               </label>
               {selectedCustomerId !== 'all' && (
                 <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
@@ -366,7 +456,6 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
               )}
             </div>
 
-            {/* Quick search */}
             <div className="relative mb-2">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -458,27 +547,45 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
             />
           </div>
 
-          {/* Tags */}
-          {tags.length > 0 && (
+          {/* Tags (with mandatory "movil" tag active and locked when defined) */}
+          {orderedTags.length > 0 && (
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Etiquetas / Tags
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Etiquetas / Tags
+                </label>
+                {mandatoryTags.length > 0 && (
+                  <span className="text-[10px] text-amber-400 flex items-center gap-1">
+                    <Lock className="w-2.5 h-2.5" />
+                    <span>Etiqueta "movil" fija por defecto</span>
+                  </span>
+                )}
+              </div>
               <div className="flex flex-wrap gap-1.5">
-                {tags.map((t) => {
-                  const active = selectedTags.includes(t);
+                {orderedTags.map((t) => {
+                  const locked = isMandatoryMovilTag(t);
+                  const active = locked || selectedTags.includes(t);
                   return (
                     <button
                       key={t}
                       type="button"
+                      disabled={locked}
                       onClick={() => toggleTag(t)}
-                      className={`text-[11px] px-2.5 py-1 rounded-lg border transition cursor-pointer ${
-                        active
-                          ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 font-medium'
-                          : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-slate-200'
+                      title={
+                        locked
+                          ? 'Etiqueta obligatoria: activa por defecto y bloqueada'
+                          : `Alternar etiqueta #${t}`
+                      }
+                      className={`text-[11px] px-2.5 py-1 rounded-lg border transition inline-flex items-center gap-1 ${
+                        locked
+                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 font-semibold cursor-not-allowed'
+                          : active
+                          ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 font-medium cursor-pointer'
+                          : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-slate-200 cursor-pointer'
                       }`}
                     >
-                      #{t}
+                      {locked && <Lock className="w-2.5 h-2.5 text-amber-400 shrink-0" />}
+                      <span>#{t}</span>
                     </button>
                   );
                 })}
@@ -517,19 +624,24 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
                   <div className="flex items-center gap-1.5">
                     {gpsCoords ? (
                       <span className="font-mono text-emerald-400 text-[11px]">
-                        {gpsCoords.latitude.toFixed(5)}, {gpsCoords.longitude.toFixed(5)} (±{Math.round(gpsCoords.accuracy || 10)}m)
+                        {gpsCoords.latitude.toFixed(5)}, {gpsCoords.longitude.toFixed(5)} (±
+                        {Math.round(gpsCoords.accuracy || 10)}m)
                       </span>
                     ) : (
-                      <span className="text-amber-400 text-[11px]">Buscando señal...</span>
+                      <span className="text-amber-400 text-[11px]">
+                        {gpsLoading ? 'Capturando señal...' : 'Sin señal (se intentará al iniciar)'}
+                      </span>
                     )}
                     <button
                       type="button"
                       onClick={onRefreshGps}
                       disabled={gpsLoading}
-                      className="p-1 rounded bg-slate-800 text-slate-300 hover:text-white"
+                      className="p-1 rounded bg-slate-800 text-slate-300 hover:text-white cursor-pointer"
                       title="Actualizar posición GPS"
                     >
-                      <RefreshCw className={`w-3 h-3 ${gpsLoading ? 'animate-spin text-cyan-400' : ''}`} />
+                      <RefreshCw
+                        className={`w-3 h-3 ${gpsLoading ? 'animate-spin text-cyan-400' : ''}`}
+                      />
                     </button>
                   </div>
                 </div>
@@ -543,7 +655,9 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
                   <Sliders className="w-3 h-3" />
                   <span>Modo de compatibilidad con plugins Kimai:</span>
                   <span className="font-semibold text-emerald-400 uppercase">{gpsPluginMode}</span>
-                  <ChevronDown className={`w-3 h-3 transition-transform ${showAdvancedGps ? 'rotate-180' : ''}`} />
+                  <ChevronDown
+                    className={`w-3 h-3 transition-transform ${showAdvancedGps ? 'rotate-180' : ''}`}
+                  />
                 </button>
 
                 {showAdvancedGps && (
@@ -552,10 +666,26 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
                       Elige el formato de payload esperado por el plugin de tu servidor:
                     </p>
                     {[
-                      { mode: 'smart', label: 'Smart Dual (Recomendado)', desc: 'Envía campos raíz y metaFields simultáneos' },
-                      { mode: 'metaFields', label: 'MetaFields Kimai 2', desc: 'latitude y longitude dentro de metaFields[]' },
-                      { mode: 'rootFields', label: 'Campos Raíz Directos', desc: 'latitude, longitude en json raíz' },
-                      { mode: 'legacy', label: 'GeoTracking Legacy', desc: 'geo_lat y geo_long' },
+                      {
+                        mode: 'smart',
+                        label: 'Smart Dual (Recomendado)',
+                        desc: 'Envía metaFields y campos compatibles con auto-detección',
+                      },
+                      {
+                        mode: 'metaFields',
+                        label: 'MetaFields Kimai 2',
+                        desc: 'latitude y longitude dentro de metaFields[] y /meta',
+                      },
+                      {
+                        mode: 'rootFields',
+                        label: 'Campos Raíz Directos',
+                        desc: 'latitude, longitude y location en json raíz',
+                      },
+                      {
+                        mode: 'legacy',
+                        label: 'GeoTracking Legacy',
+                        desc: 'geo_lat y geo_long en metaFields[]',
+                      },
                     ].map((item) => (
                       <label
                         key={item.mode}
